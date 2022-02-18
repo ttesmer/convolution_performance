@@ -1,5 +1,5 @@
 # Comparison of convolution performance
 ## Results
-| CUDA | cuBLAS | Intel MKL | hmatrix | Repa |
-| ---- | ------ | --------- | ------- | ---- |
-
+|        | hmatrix | Massiv | Repa   |
+| ------ | ------- | ------ | ------ |
+| Time   |  1.54s  | /      | 47.93s |

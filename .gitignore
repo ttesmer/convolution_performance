@@ -1,1 +1,4 @@
-/dist/
+dist/
+dist-newstyle/
+.*.swp
+cabal.project.*

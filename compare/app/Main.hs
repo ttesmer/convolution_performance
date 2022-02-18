@@ -1,3 +1,4 @@
+{-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE QuasiQuotes     #-}
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
@@ -7,6 +8,7 @@ import           Control.Monad
 import           Data.Array.Repa              as R
 import           Data.Array.Repa.Stencil      as Stencil
 import           Data.Array.Repa.Stencil.Dim2 as Stencil
+import qualified Data.Massiv.Array            as MA
 import qualified Data.ByteString              as BS
 import qualified Data.ByteString.Lazy         as BL
 import           Data.List                    as L
@@ -16,6 +18,13 @@ import           System.Directory             (getCurrentDirectory)
 import           System.Environment
 import           System.IO
 import           System.Random                as Rand
+import           Control.DeepSeq              as DS
+
+import           Foreign.Ptr                  ( Ptr )
+import           System.IO.Unsafe             (unsafePerformIO)
+import qualified Data.Vector.Storable as U    ( unsafeToForeignPtr0, unsafeFromForeignPtr0 )
+import qualified Numeric.LinearAlgebra.Devel as U
+import           Foreign                      ( mallocForeignPtrArray, withForeignPtr )
 
 main :: IO ()
 main = do
@@ -26,6 +35,8 @@ main = do
     case args of
       "--hmatrix":_ -> do
           runHmatrix imgs kernels
+      "--massiv":_ -> do
+          runMassiv imgs kernels
       "--repa":_ -> do
           runRepa imgs kernels
       "--cublas":_ -> do
@@ -34,16 +45,23 @@ main = do
           runCuda
       _ -> putStrLn "Error"
 
-runHmatrix :: [LA.Matrix Double]
-           -> [LA.Matrix Double] -> IO ()
-runHmatrix imgs kernels = do
-    let k = head kernels
-    let img = head imgs
-    let dCircKernel = doublyBlockedCirculant . zeroPad (28, 28) . flipKernel $ k
-    sequence_ $
-        (LA.dispShort 10 10 3) <$> [dCircKernel LA.<> img | img <- imgs]
+runMassiv :: a -> b -> IO ()
+runMassiv a b = putStrLn "TODO"
 
--- time: 47.93s user
+-- time:   1.54s user
+-- space: ~2GB?
+runHmatrix :: [LA.Matrix Double] -> [LA.Matrix Double] -> IO ()
+runHmatrix imgs kernels =
+    let kcols = LA.fromRows $ P.map LA.flatten kernels
+        icols = (LA.tr . im2col 5 5 1 1) <$> imgs
+        res = P.map (kcols LA.<>) icols
+     in res `deepseq` putStrLn $ "Done, size: " P.++ (show . length $ res)
+   
+    --let dCircKernel = doublyBlockedCirculant . zeroPad (28, 28) . flipKernel $ k
+    --sequence_ $
+    --    (LA.dispShort 10 10 3) <$> [dCircKernel LA.<> img | img <- imgs]
+
+-- time:   47.93s user
 -- space: ~5GB
 runRepa :: [LA.Matrix Double] -> [LA.Matrix Double] -> IO ()
 runRepa imgs kernels = do
@@ -55,7 +73,7 @@ runRepa imgs kernels = do
                             10 10 10 10 10
                             10 10 10 10 10
                             10 10 10 10 10
-                            10 10 10 10 10 |] :: Stencil DIM2 Double
+                            10 10 10 10 10 |] :: Stencil.Stencil DIM2 Double
     res <- forM is $ \i ->
         forM (replicate 20 kernel) $ \k ->
             computeP ((mapStencil2 (BoundConst 0) k i) :: Array PC5 DIM2 Double)
@@ -130,4 +148,31 @@ normalize x = fromIntegral x/255
 hmatrix2repa :: LA.Matrix Double -> R.Array R.U R.DIM2 Double
 hmatrix2repa mat = R.fromListUnboxed (R.Z R.:. (r::Int) R.:. (c::Int)) . LA.toList . LA.flatten $ mat
     where (r, c) = LA.size mat
+
+foreign import ccall unsafe im2col_cpu :: Ptr Double -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Ptr Double -> IO ()
+
+im2col_c :: Int -> Int -> Int -> Int -> Int -> Int -> Int -> LA.Matrix Double -> LA.Matrix Double
+im2col_c channels height width kernelRows kernelColumns strideRows strideColumns dataImg = 
+    let vec = LA.flatten dataImg
+        rowOut = (height - kernelRows) `div` strideRows + 1
+        colOut = (width - kernelColumns) `div` strideColumns + 1
+        kernelSize = kernelRows * kernelColumns
+        numberOfPatches = rowOut * colOut
+    in unsafePerformIO $ do
+        outPtr <- mallocForeignPtrArray (numberOfPatches * kernelSize * channels)
+        let (inPtr, _) = U.unsafeToForeignPtr0 vec
+    
+        withForeignPtr inPtr $ \inPtr' ->
+            withForeignPtr outPtr $ \outPtr' ->
+                im2col_cpu inPtr' channels height width kernelRows kernelColumns strideRows strideColumns outPtr'
+
+        let matVec = U.unsafeFromForeignPtr0 outPtr (numberOfPatches * kernelSize * channels)
+        return $ U.matrixFromVector U.RowMajor numberOfPatches (kernelSize * channels) matVec
+
+im2col :: Int -> Int -> Int -> Int -> LA.Matrix Double -> LA.Matrix Double
+im2col kernelRows kernelColumns strideRows strideColumns dataIm =
+  let channels = 1
+      height = LA.rows dataIm
+      width  = LA.cols dataIm
+  in  im2col_c channels height width kernelRows kernelColumns strideRows strideColumns dataIm
 

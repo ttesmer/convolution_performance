@@ -1,0 +1,33 @@
+cabal-version:      2.4
+name:               compare
+version:            0.1.0.0
+
+author:             ttesmer
+maintainer:         t.tesmer@gmx.de
+
+extra-source-files: CHANGELOG.md
+
+executable compare
+    main-is:          Main.hs
+
+    -- Modules included in this executable, other than Main.
+    -- other-modules:
+
+    -- LANGUAGE extensions used by modules in this package.
+    -- other-extensions:
+    build-depends:    
+          base ^>=4.14.3.0
+        , random
+        , zlib
+        , hmatrix
+        , repa
+        , massiv
+        , bytestring
+        , vector
+        , directory
+        , deepseq
+    hs-source-dirs:   app
+    default-language: Haskell2010
+
+    includes:            cbits/im2col.h
+    c-sources:           cbits/im2col.c
