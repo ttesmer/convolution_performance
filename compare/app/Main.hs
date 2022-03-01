@@ -3,25 +3,25 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
 
-import           Codec.Compression.GZip       (decompress)
+import           Codec.Compression.GZip       ( decompress )
 import           Control.Monad
-import           Data.Array.Repa              as R
-import           Data.Array.Repa.Stencil      as Stencil
-import           Data.Array.Repa.Stencil.Dim2 as Stencil
-import qualified Data.Massiv.Array            as MA
+import qualified Data.Array.Repa              as R
+import qualified Data.Array.Repa.Stencil      as Stencil
+import qualified Data.Array.Repa.Stencil.Dim2 as Stencil
+import qualified Data.Massiv.Array            as A
 import qualified Data.ByteString              as BS
 import qualified Data.ByteString.Lazy         as BL
 import           Data.List                    as L
 import qualified Numeric.LinearAlgebra        as LA
 import           Prelude                      as P
-import           System.Directory             (getCurrentDirectory)
+import           System.Directory             ( getCurrentDirectory )
 import           System.Environment
 import           System.IO
 import           System.Random                as Rand
 import           Control.DeepSeq              as DS
 
 import           Foreign.Ptr                  ( Ptr )
-import           System.IO.Unsafe             (unsafePerformIO)
+import           System.IO.Unsafe             ( unsafePerformIO )
 import qualified Data.Vector.Storable as U    ( unsafeToForeignPtr0, unsafeFromForeignPtr0 )
 import qualified Numeric.LinearAlgebra.Devel as U
 import           Foreign                      ( mallocForeignPtrArray, withForeignPtr )
@@ -33,20 +33,57 @@ main = do
     imgs <- loadData
     kernels <- initKernels
     case args of
-      "--hmatrix":_ -> do
-          runHmatrix imgs kernels
-      "--massiv":_ -> do
-          runMassiv imgs kernels
-      "--repa":_ -> do
-          runRepa imgs kernels
-      "--cublas":_ -> do
-          runCublas
-      "--cuda":_ -> do
-          runCuda
-      _ -> putStrLn "Error"
+      "--massiv":_  -> do
+          data_ <- return . BL.toStrict =<< getData "train-images-idx3-ubyte.gz"
+          let imgs_ :: A.Array A.U A.Ix3 Double
+              imgs_ = A.fromLists' A.Par $
+                  (getImage_ data_) <$> [0..49999]
+              {-# INLINE imgs_ #-}
+              kernels_ :: A.Array A.U A.Ix3 Double
+              kernels_ = A.computeAs A.U $
+                  A.uniformRangeArray (mkStdGen 42) (0, 1) (A.ParN 3) (A.Sz3 20 5 5)
+                  -- TODO: convert to standard normal
+                  -- distribution using Box-Mueller transform
+          runMassiv imgs_ kernels_
+      "--hmatrix":_ -> runHmatrix imgs kernels
+      "--cublas":_  -> runCublas
+      "--repa":_    -> runRepa imgs kernels
+      "--cuda":_    -> runCuda
+      _             -> putStrLn "Error"
 
-runMassiv :: a -> b -> IO ()
-runMassiv a b = putStrLn "TODO"
+runMassiv :: A.Array A.U A.Ix3 Double -> A.Array A.U A.Ix3 Double -> IO ()
+runMassiv imgs kernels = do
+--    let stencil = A.makeConvolutionStencilFromKernel . (ks !!)
+--        {-# INLINE stencil #-}
+--
+--        base = A.computeAs A.U $ A.applyStencil A.noPadding (stenc 0) x
+--        conv_ = ((\i -> (\s -> A.computeAs A.U $ A.applyStencil A.noPadding s i) <$> stencils) <$> is)
+--        conv = (foldl1' (\p ch -> A.computeAs A.U $ A.append' 3 p ch) conv) :: A.Array A.U A.Ix3 Double
+    imgs `deepseq` putStrLn "Done"
+
+-- loadDataMassiv :: IO (A.Array A.U A.Ix3 Double)
+-- loadDataMassiv = do
+--     trainImgs <- getData "train-images-idx3-ubyte.gz"
+--     let imgs = BL.toStrict trainImgs
+--         imgArr :: A.Array A.U A.Ix3 Double
+--         imgArr = foldl1 (\acc i -> A.computeAs A.U $ A.append' 3 acc i) [getImage_ n imgs | n <- [0..49999]]
+--     return imgArr
+
+getImage_ :: BS.ByteString -> Int -> [[Double]]
+getImage_ imgs n = chunkList 28 [normalize $ BS.index imgs (16 + n*784 + s) | s <- [0..783]]
+
+-- loadDataMassiv :: IO (A.Array A.U A.Ix3 Double)
+-- loadDataMassiv = do
+--     trainImgs <- getData "train-images-idx3-ubyte.gz"
+--     let imgs = BL.toStrict trainImgs
+--         imgArr :: A.Array A.U A.Ix3 Double
+--         imgArr = foldl1 (\acc i -> A.computeAs A.U $ A.append' 3 acc i) [getImage_ n imgs | n <- [0..49999]]
+--     return imgArr
+
+-- getImage_ :: Int -> BS.ByteString -> A.Array A.U A.Ix3 Double
+-- getImage_ n imgs = A.resize' (A.Sz (1 A.:> 28 A.:. 28)) $
+--     A.fromList A.Par [normalize $ BS.index imgs (16 + n*784 + s) | s <- [0..783]]
+
 
 -- time:   1.54s user
 -- space: ~2GB?
@@ -64,20 +101,20 @@ runHmatrix imgs kernels =
 -- time:   47.93s user
 -- space: ~5GB
 runRepa :: [LA.Matrix Double] -> [LA.Matrix Double] -> IO ()
-runRepa imgs kernels = do
-    let ks = hmatrix2repa <$> kernels
-    let is = hmatrix2repa <$> imgs
-
-    let imgMat = head is
-    let kernel = [stencil2| 10 10 10 10 10
-                            10 10 10 10 10
-                            10 10 10 10 10
-                            10 10 10 10 10
-                            10 10 10 10 10 |] :: Stencil.Stencil DIM2 Double
-    res <- forM is $ \i ->
-        forM (replicate 20 kernel) $ \k ->
-            computeP ((mapStencil2 (BoundConst 0) k i) :: Array PC5 DIM2 Double)
-    print (res :: [[Array U DIM2 Double]])
+runRepa imgs kernels = print "Done"
+--    let ks = hmatrix2repa <$> kernels
+--        is = hmatrix2repa <$> imgs
+--
+--        imgMat = head is
+--        kernel = [stencil2| 10 10 10 10 10
+--                            10 10 10 10 10
+--                            10 10 10 10 10
+--                            10 10 10 10 10
+--                            10 10 10 10 10 |] :: Stencil.Stencil DIM2 Double
+--    res <- forM is $ \i ->
+--        forM (replicate 20 kernel) $ \k ->
+--            computeP ((mapStencil2 (BoundConst 0) k i) :: Array PC5 DIM2 Double)
+--    print (res :: [[Array U DIM2 Double]])
 
 runCublas = print ""
 
@@ -127,7 +164,7 @@ loadData :: IO [LA.Matrix Double]
 loadData = do
     trainImgs <- getData "train-images-idx3-ubyte.gz"
     let imgs = BL.toStrict trainImgs
-    let trainData = chunkList 10 [getImage n imgs | n <- [0..49999]]
+        trainData = chunkList 10 [getImage n imgs | n <- [0..49999]]
     return $ LA.fromColumns <$> trainData
 
 getImage :: Int -> BS.ByteString -> LA.Vector Double
